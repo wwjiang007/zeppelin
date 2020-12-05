@@ -305,11 +305,11 @@ public class JDBCInterpreterTest extends BasicJDBCTestCaseAdapter {
     assertEquals("select * from test_table WHERE ID = \";'\"", multipleSqlArray.get(2));
     assertEquals("select * from test_table WHERE ID = ';'", multipleSqlArray.get(3));
     assertEquals("select '\n', ';'", multipleSqlArray.get(4));
-    assertEquals("select replace('A\\;B', '\\', 'text')", multipleSqlArray.get(5));
-    assertEquals("select '\\', ';'", multipleSqlArray.get(6));
-    assertEquals("select '''', ';'", multipleSqlArray.get(7));
-    assertEquals("select /*+ scan */ * from test_table", multipleSqlArray.get(8));
-    assertEquals("select * from test_table", multipleSqlArray.get(9));
+    assertEquals("\nselect replace('A\\;B', '\\', 'text')", multipleSqlArray.get(5));
+    assertEquals("\nselect '\\', ';'", multipleSqlArray.get(6));
+    assertEquals("\nselect '''', ';'", multipleSqlArray.get(7));
+    assertEquals("\nselect /*+ scan */ * from test_table", multipleSqlArray.get(8));
+    assertEquals("\n\nselect * from test_table", multipleSqlArray.get(9));
   }
 
   @Test

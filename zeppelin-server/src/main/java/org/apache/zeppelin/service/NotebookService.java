@@ -429,11 +429,11 @@ public class NotebookService {
             // also stop execution when user code in a paragraph fails
             Paragraph p = note.getParagraph(paragraphId);
             InterpreterResult result = p.getReturn();
-            if (result.code() == ERROR) {
+            if (result != null && result.code() == ERROR) {
               return false;
             }
           } catch (Exception e) {
-            throw new IOException("Fail to run paragraph json: " + raw);
+            throw new IOException("Fail to run paragraph json: " + raw, e);
           }
         }
       } finally {
@@ -650,21 +650,23 @@ public class NotebookService {
       callback.onFailure(new NoteNotFoundException(noteId), context);
       throw new IOException("No such note");
     }
-    if (note.getParagraphCount() < maxParagraph) {
-      return note.addNewParagraph(context.getAutheInfo());
-    } else {
-      boolean removed = false;
-      for (int i = 1; i< note.getParagraphCount(); ++i) {
-        if (note.getParagraph(i).getStatus().isCompleted()) {
-          note.removeParagraph(context.getAutheInfo().getUser(), note.getParagraph(i).getId());
-          removed = true;
-          break;
+    synchronized (this) {
+      if (note.getParagraphCount() < maxParagraph) {
+        return note.addNewParagraph(context.getAutheInfo());
+      } else {
+        boolean removed = false;
+        for (int i = 1; i < note.getParagraphCount(); ++i) {
+          if (note.getParagraph(i).getStatus().isCompleted()) {
+            note.removeParagraph(context.getAutheInfo().getUser(), note.getParagraph(i).getId());
+            removed = true;
+            break;
+          }
         }
+        if (!removed) {
+          throw new IOException("All the paragraphs are not completed, unable to find available paragraph");
+        }
+        return note.addNewParagraph(context.getAutheInfo());
       }
-      if (!removed) {
-        throw new IOException("All the paragraphs are not completed, unable to find available paragraph");
-      }
-      return note.addNewParagraph(context.getAutheInfo());
     }
   }
 

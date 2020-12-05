@@ -65,6 +65,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Represent the note of Zeppelin. All the note and its paragraph operations are done
@@ -86,16 +87,16 @@ public class Note implements JsonSerializable {
     }
   };
   private static final Gson GSON = new GsonBuilder()
-      .setPrettyPrinting()
-      .setDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-      .registerTypeAdapter(Date.class, new NotebookImportDeserializer())
-      .registerTypeAdapterFactory(Input.TypeAdapterFactory)
-      .setExclusionStrategies(strategy)
-      .create();
+          .setPrettyPrinting()
+          .setDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+          .registerTypeAdapter(Date.class, new NotebookImportDeserializer())
+          .registerTypeAdapterFactory(Input.TypeAdapterFactory)
+          .setExclusionStrategies(strategy)
+          .create();
   private static final DateTimeFormatter DATE_TIME_FORMATTER =
           DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 
-  private List<Paragraph> paragraphs = new LinkedList<>();
+  private CopyOnWriteArrayList<Paragraph> paragraphs = new CopyOnWriteArrayList<>();
   private String name = "";
   private String id;
   private String defaultInterpreterGroup;
@@ -124,6 +125,7 @@ public class Note implements JsonSerializable {
 
   /********************************** transient fields ******************************************/
   private transient boolean loaded = false;
+  private transient boolean saved = false;
   private transient InterpreterFactory interpreterFactory;
   private transient InterpreterSettingManager interpreterSettingManager;
   private transient ParagraphJobListener paragraphJobListener;
@@ -136,8 +138,8 @@ public class Note implements JsonSerializable {
   }
 
   public Note(String path, String defaultInterpreterGroup, InterpreterFactory factory,
-      InterpreterSettingManager interpreterSettingManager, ParagraphJobListener paragraphJobListener,
-      Credentials credentials, List<NoteEventListener> noteEventListener) {
+              InterpreterSettingManager interpreterSettingManager, ParagraphJobListener paragraphJobListener,
+              Credentials credentials, List<NoteEventListener> noteEventListener) {
     setPath(path);
     this.defaultInterpreterGroup = defaultInterpreterGroup;
     this.interpreterFactory = factory;
@@ -190,13 +192,28 @@ public class Note implements JsonSerializable {
    * Release note memory
    */
   public void unLoad() {
-    this.setLoaded(false);
-    this.paragraphs = null;
-    this.config = null;
-    this.info = null;
-    this.noteForms = null;
-    this.noteParams = null;
-    this.angularObjects = null;
+    if (isRunning() || isParagraphRunning()) {
+      LOGGER.warn("Unable to unload note because it is in RUNNING");
+    } else {
+      this.setLoaded(false);
+      this.paragraphs = null;
+      this.config = null;
+      this.info = null;
+      this.noteForms = null;
+      this.noteParams = null;
+      this.angularObjects = null;
+    }
+  }
+
+  public boolean isParagraphRunning() {
+    if (paragraphs != null) {
+      for (Paragraph p : paragraphs) {
+        if (p.isRunning()) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   public boolean isPersonalizedMode() {
@@ -205,8 +222,8 @@ public class Note implements JsonSerializable {
   }
 
   public void setPersonalizedMode(Boolean value) {
-    String valueString = StringUtils.EMPTY;
-    if (value) {
+    String valueString;
+    if (value.booleanValue()) {
       valueString = "true";
     } else {
       valueString = "false";
@@ -252,7 +269,7 @@ public class Note implements JsonSerializable {
   public String getDefaultInterpreterGroup() {
     if (StringUtils.isBlank(defaultInterpreterGroup)) {
       defaultInterpreterGroup = ZeppelinConfiguration.create()
-          .getString(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_GROUP_DEFAULT);
+              .getString(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_GROUP_DEFAULT);
     }
     return defaultInterpreterGroup;
   }
@@ -365,7 +382,9 @@ public class Note implements JsonSerializable {
       // Delete existing AngularObject
       Iterator<AngularObject> iter = angularObjectList.iterator();
       while(iter.hasNext()){
-        String noteId = "", paragraphId = "", name = "";
+        String noteId = "";
+        String paragraphId = "";
+        String name = "";
         Object object = iter.next();
         if (object instanceof AngularObject) {
           AngularObject ao = (AngularObject)object;
@@ -381,8 +400,8 @@ public class Note implements JsonSerializable {
           continue;
         }
         if (StringUtils.equals(noteId, angularObject.getNoteId())
-            && StringUtils.equals(paragraphId, angularObject.getParagraphId())
-            && StringUtils.equals(name, angularObject.getName())) {
+                && StringUtils.equals(paragraphId, angularObject.getParagraphId())
+                && StringUtils.equals(name, angularObject.getName())) {
           iter.remove();
         }
       }
@@ -396,9 +415,7 @@ public class Note implements JsonSerializable {
    */
   public void deleteAngularObject(String intpGroupId, String noteId, String paragraphId, String name) {
     List<AngularObject> angularObjectList;
-    if (!angularObjects.containsKey(intpGroupId)) {
-      return;
-    } else {
+    if (angularObjects.containsKey(intpGroupId)) {
       angularObjectList = angularObjects.get(intpGroupId);
 
       // Delete existing AngularObject
@@ -422,8 +439,8 @@ public class Note implements JsonSerializable {
           continue;
         }
         if (StringUtils.equals(noteId, noteIdCandidate)
-            && StringUtils.equals(paragraphId, paragraphIdCandidate)
-            && StringUtils.equals(name, nameCandidate)) {
+                && StringUtils.equals(paragraphId, paragraphIdCandidate)
+                && StringUtils.equals(name, nameCandidate)) {
           iter.remove();
         }
       }
@@ -451,7 +468,7 @@ public class Note implements JsonSerializable {
     Map<String, Object> param = srcParagraph.settings.getParams();
     Map<String, Input> form = srcParagraph.settings.getForms();
 
-    LOGGER.debug("srcParagraph user: " + srcParagraph.getUser());
+    LOGGER.debug("srcParagraph user: {}", srcParagraph.getUser());
 
     newParagraph.setAuthenticationInfo(subject);
     newParagraph.setConfig(config);
@@ -460,7 +477,7 @@ public class Note implements JsonSerializable {
     newParagraph.setText(srcParagraph.getText());
     newParagraph.setTitle(srcParagraph.getTitle());
 
-    LOGGER.debug("newParagraph user: " + newParagraph.getUser());
+    LOGGER.debug("newParagraph user: {}", newParagraph.getUser());
 
     try {
       String resultJson = GSON.toJson(srcParagraph.getReturn());
@@ -468,13 +485,10 @@ public class Note implements JsonSerializable {
       newParagraph.setReturn(result, null);
     } catch (Exception e) {
       // 'result' part of Note consists of exception, instead of actual interpreter results
-      LOGGER.warn(
-          "Paragraph " + srcParagraph.getId() + " has a result with exception. " + e.getMessage());
+      LOGGER.warn("Paragraph {} has a result with exception. {}", srcParagraph.getId(), e.getMessage());
     }
 
-    synchronized (paragraphs) {
-      paragraphs.add(newParagraph);
-    }
+    paragraphs.add(newParagraph);
 
     try {
       fireParagraphCreateEvent(newParagraph);
@@ -514,7 +528,7 @@ public class Note implements JsonSerializable {
       // Set the default parameter configuration for the paragraph
       // based on `interpreter-setting.json` config
       Map<String, Object> config =
-          interpreterSettingManager.getConfigSetting(defaultInterpreterGroup);
+              interpreterSettingManager.getConfigSetting(defaultInterpreterGroup);
       paragraph.setConfig(config);
     }
     paragraph.setAuthenticationInfo(authenticationInfo);
@@ -528,9 +542,7 @@ public class Note implements JsonSerializable {
   }
 
   private void insertParagraph(Paragraph paragraph, int index) {
-    synchronized (paragraphs) {
-      paragraphs.add(index, paragraph);
-    }
+    paragraphs.add(index, paragraph);
     try {
       fireParagraphCreateEvent(paragraph);
     } catch (IOException e) {
@@ -547,19 +559,15 @@ public class Note implements JsonSerializable {
   public Paragraph removeParagraph(String user, String paragraphId) {
     removeAllAngularObjectInParagraph(user, paragraphId);
     interpreterSettingManager.removeResourcesBelongsToParagraph(getId(), paragraphId);
-    synchronized (paragraphs) {
-      Iterator<Paragraph> i = paragraphs.iterator();
-      while (i.hasNext()) {
-        Paragraph p = i.next();
-        if (p.getId().equals(paragraphId)) {
-          i.remove();
-          try {
-            fireParagraphRemoveEvent(p);
-          } catch (IOException e) {
-            e.printStackTrace();
-          }
-          return p;
+    for (Paragraph p : paragraphs) {
+      if (p.getId().equals(paragraphId)) {
+        paragraphs.remove(p);
+        try {
+          fireParagraphRemoveEvent(p);
+        } catch (IOException e) {
+          LOGGER.error("Fail to fire ParagraphRemoveEvent", e);
         }
+        return p;
       }
     }
     return null;
@@ -572,16 +580,14 @@ public class Note implements JsonSerializable {
   }
 
   public Paragraph clearPersonalizedParagraphOutput(String paragraphId, String user) {
-    synchronized (paragraphs) {
-      for (Paragraph p : paragraphs) {
-        if (!p.getId().equals(paragraphId)) {
-          continue;
-        }
-
-        p = p.getUserParagraphMap().get(user);
-        clearParagraphOutputFields(p);
-        return p;
+    for (Paragraph p : paragraphs) {
+      if (!p.getId().equals(paragraphId)) {
+        continue;
       }
+
+      p = p.getUserParagraphMap().get(user);
+      clearParagraphOutputFields(p);
+      return p;
     }
     return null;
   }
@@ -593,15 +599,13 @@ public class Note implements JsonSerializable {
    * @return Paragraph
    */
   public Paragraph clearParagraphOutput(String paragraphId) {
-    synchronized (paragraphs) {
-      for (Paragraph p : paragraphs) {
-        if (!p.getId().equals(paragraphId)) {
-          continue;
-        }
-
-        clearParagraphOutputFields(p);
-        return p;
+    for (Paragraph p : paragraphs) {
+      if (!p.getId().equals(paragraphId)) {
+        continue;
       }
+
+      clearParagraphOutputFields(p);
+      return p;
     }
     return null;
   }
@@ -610,10 +614,8 @@ public class Note implements JsonSerializable {
    * Clear all paragraph output of note
    */
   public void clearAllParagraphOutput() {
-    synchronized (paragraphs) {
-      for (Paragraph p : paragraphs) {
-        p.setReturn(null, null);
-      }
+    for (Paragraph p : paragraphs) {
+      p.setReturn(null, null);
     }
   }
 
@@ -636,41 +638,37 @@ public class Note implements JsonSerializable {
    *                                   when index is out of bound
    */
   public void moveParagraph(String paragraphId, int index, boolean throwWhenIndexIsOutOfBound) {
-    synchronized (paragraphs) {
-      int oldIndex;
-      Paragraph p = null;
+    int oldIndex;
+    Paragraph p = null;
 
-      if (index < 0 || index >= paragraphs.size()) {
-        if (throwWhenIndexIsOutOfBound) {
-          throw new IndexOutOfBoundsException(
-              "paragraph size is " + paragraphs.size() + " , index is " + index);
-        } else {
+    if (index < 0 || index >= paragraphs.size()) {
+      if (throwWhenIndexIsOutOfBound) {
+        throw new IndexOutOfBoundsException(
+                "paragraph size is " + paragraphs.size() + " , index is " + index);
+      } else {
+        return;
+      }
+    }
+
+    for (int i = 0; i < paragraphs.size(); i++) {
+      if (paragraphs.get(i).getId().equals(paragraphId)) {
+        oldIndex = i;
+        if (oldIndex == index) {
           return;
         }
+        p = paragraphs.remove(i);
       }
+    }
 
-      for (int i = 0; i < paragraphs.size(); i++) {
-        if (paragraphs.get(i).getId().equals(paragraphId)) {
-          oldIndex = i;
-          if (oldIndex == index) {
-            return;
-          }
-          p = paragraphs.remove(i);
-        }
-      }
-
-      if (p != null) {
-        paragraphs.add(index, p);
-      }
+    if (p != null) {
+      paragraphs.add(index, p);
     }
   }
 
   public boolean isLastParagraph(String paragraphId) {
     if (!paragraphs.isEmpty()) {
-      synchronized (paragraphs) {
-        if (paragraphId.equals(paragraphs.get(paragraphs.size() - 1).getId())) {
-          return true;
-        }
+      if (paragraphId.equals(paragraphs.get(paragraphs.size() - 1).getId())) {
+        return true;
       }
       return false;
     }
@@ -683,11 +681,9 @@ public class Note implements JsonSerializable {
   }
 
   public Paragraph getParagraph(String paragraphId) {
-    synchronized (paragraphs) {
-      for (Paragraph p : paragraphs) {
-        if (p.getId().equals(paragraphId)) {
-          return p;
-        }
+    for (Paragraph p : paragraphs) {
+      if (p.getId().equals(paragraphId)) {
+        return p;
       }
     }
     return null;
@@ -698,13 +694,11 @@ public class Note implements JsonSerializable {
   }
 
   public Paragraph getLastParagraph() {
-    synchronized (paragraphs) {
-      return paragraphs.get(paragraphs.size() - 1);
-    }
+    return paragraphs.get(paragraphs.size() - 1);
   }
 
   private void setParagraphMagic(Paragraph p, int index) {
-    if (paragraphs.size() > 0) {
+    if (!paragraphs.isEmpty()) {
       String replName;
       if (index == 0) {
         replName = paragraphs.get(0).getIntpText();
@@ -750,7 +744,7 @@ public class Note implements JsonSerializable {
         try {
           runAllSync(authInfo, isolated, params);
         } catch (Exception e) {
-          LOGGER.warn("Fail to run note: " + id, e);
+          LOGGER.warn("Fail to run note: {}", id, e);
         } finally {
           setRunning(false);
           setIsolatedMode(false);
@@ -861,15 +855,12 @@ public class Note implements JsonSerializable {
    * Return true if there is a running or pending paragraph
    */
   public boolean haveRunningOrPendingParagraphs() {
-    synchronized (paragraphs) {
-      for (Paragraph p : paragraphs) {
-        Status status = p.getStatus();
-        if (status.isRunning() || status.isPending()) {
-          return true;
-        }
+    for (Paragraph p : paragraphs) {
+      Status status = p.getStatus();
+      if (status.isRunning() || status.isPending()) {
+        return true;
       }
     }
-
     return false;
   }
 
@@ -887,8 +878,8 @@ public class Note implements JsonSerializable {
     return p.completion(buffer, cursor);
   }
 
-  public List<Paragraph> getParagraphs() {
-    return new ArrayList<>(this.paragraphs);
+  public CopyOnWriteArrayList<Paragraph> getParagraphs() {
+    return this.paragraphs;
   }
 
   // TODO(zjffdu) how does this used ?
@@ -913,7 +904,7 @@ public class Note implements JsonSerializable {
     angularObjects = new HashMap<>();
 
     List<InterpreterSetting> settings = getBindedInterpreterSettings(Lists.newArrayList(user));
-    if (settings == null || settings.size() == 0) {
+    if (settings == null || settings.isEmpty()) {
       return;
     }
 
@@ -933,7 +924,7 @@ public class Note implements JsonSerializable {
         if (appStates != null) {
           for (ApplicationState app : appStates) {
             ((RemoteAngularObjectRegistry) registry)
-                .removeAllAndNotifyRemoteProcess(id, app.getId());
+                    .removeAllAndNotifyRemoteProcess(id, app.getId());
           }
         }
       } else {
@@ -1083,6 +1074,10 @@ public class Note implements JsonSerializable {
     info.remove("startTime");
   }
 
+  /**
+   * Is note running
+   * @return
+   */
   public boolean isRunning() {
     return (boolean) getInfo().getOrDefault("isRunning", false);
   }
@@ -1116,7 +1111,7 @@ public class Note implements JsonSerializable {
       note.postProcessParagraphs();
       return note;
     } catch (Exception e) {
-      LOGGER.error("Fail to parse note json: " + e.toString());
+      LOGGER.error("Fail to parse note json: {}", e.toString());
       throw new IOException("Fail to parse note json: " + json, e);
     }
   }
@@ -1171,7 +1166,7 @@ public class Note implements JsonSerializable {
       return false;
     }
     if (angularObjects != null ?
-        !angularObjects.equals(note.angularObjects) : note.angularObjects != null) {
+            !angularObjects.equals(note.angularObjects) : note.angularObjects != null) {
       return false;
     }
     if (config != null ? !config.equals(note.config) : note.config != null) {
@@ -1199,5 +1194,13 @@ public class Note implements JsonSerializable {
 
   public void setNoteEventListeners(List<NoteEventListener> noteEventListeners) {
     this.noteEventListeners = noteEventListeners;
+  }
+
+  public void setSaved(boolean saved) {
+    this.saved = saved;
+  }
+
+  public boolean isSaved() {
+    return saved;
   }
 }
